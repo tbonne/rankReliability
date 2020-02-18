@@ -11,7 +11,7 @@ reliability_check<-function(rank.df,testing.df){
   rank.df$ID<- as.factor(rank.df$ID)
   rank.df$Winner <- factor(rank.df$ID, levels=levels(testing.df$winner))
   rank.df$Loser <- factor(rank.df$ID, levels=levels(testing.df$loser))
-  rank.df <- rank.df %>% dplyr::select( ncol(rank.df), ncol(rank.df)-1,everything())
+  rank.df <- rank.df %>% select( ncol(rank.df), ncol(rank.df)-1,everything())
   
   
   is.match.true<- vector()
@@ -30,17 +30,22 @@ reliability_check<-function(rank.df,testing.df){
       
       if (testing.df$draw[i] == "TRUE"  ){
         
-        if (as.numeric(as.character(rank.df[match_winner,j]))== as.numeric(as.character(rank.df[match_loser,j]))){
-          is.match.true[i] <- 1
-          
+        if (length(rank.df[match_loser,j])==0 | length(rank.df[match_winner,j])==0){
+          is.match.true[i] <- NA
         } else{
-          is.match.true[i] <- 0
+          
+          if (as.numeric(as.character(rank.df[match_winner,j]))== as.numeric(as.character(rank.df[match_loser,j]))){
+            is.match.true[i] <- 1
+            
+          } else {
+            is.match.true[i] <- 0
+            
+          }
         }
-        
       }
       if (testing.df$draw[i] == "FALSE"){
         
-        if ( is.na(rank.df[match_loser,j]) | is.na(rank.df[match_winner,j]) ){
+        if (length(rank.df[match_loser,j])==0 | length(rank.df[match_winner,j])==0 ){
           is.match.true[i] <- NA
           
         } else if (as.numeric(as.character(rank.df[match_winner,j])) <=as.numeric(as.character(rank.df[match_loser,j]))){
