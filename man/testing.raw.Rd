@@ -9,15 +9,10 @@
 \href{https://www.biorxiv.org/content/10.1101/692384v1?rss=1}{QTL Archive}
 }
 \usage{
-data(testing.raw)
+testing.raw
 }
 \description{
 Dominance data from a Vervet population
-}
-\examples{
-data(testing.raw)
-testing.raw
-
 }
 \references{
 Vilette et al. (2020) 

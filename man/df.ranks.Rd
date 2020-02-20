@@ -9,15 +9,10 @@
 \href{https://www.biorxiv.org/content/10.1101/692384v1?rss=1}{QTL Archive}
 }
 \usage{
-data(rank_df)
+df.ranks
 }
 \description{
 Ranking estimates from a Vervet population
-}
-\examples{
-data(df.ranks)
-df.ranks
-
 }
 \references{
 Vilette et al. (2020) 

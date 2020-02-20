@@ -9,15 +9,10 @@
 \href{https://www.biorxiv.org/content/10.1101/692384v1?rss=1}{QTL Archive}
 }
 \usage{
-data(df.testing)
+df.testing
 }
 \description{
 Data from a Vervet population
-}
-\examples{
-data(df.testing)
-df.testing
-
 }
 \references{
 Vilette et al. (2020) 
