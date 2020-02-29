@@ -1,0 +1,489 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#### This code is a snapshot of the complete code presented in the file "ranking.methods". It seeks to show more easily the split between training and testing datasets and how it is applied to the 2 types of approach: dynamic and static. 
+
+###libraries
+```{r}
+library(ggplot2)
+library(directlabels)
+library(compete)
+devtools::install_github("tbonne/rankReliability", force=TRUE)
+library(rankReliability)
+library(lubridate)
+library(plyr)
+library(dplyr)
+library(EloRating)
+```
+
+### Load needed functions
+```{r}
+## CREATE DATAFRAME FUNCTION
+create.dataframe<- function(training.data){
+  
+  List<- training.data[,3:4]
+  Individuals<-c(as.character(List$from),as.character(List$to))
+  
+  #Delete replications
+  Individual.vector<-unique(Individuals)
+  nb.individual <- length(Individual.vector)
+  
+  #create a data frame out of a transposed vector
+  Obs.Frame = as.data.frame(t(Individual.vector))
+  #change the names of the dataframe to be IDs
+  colnames(Obs.Frame) <- Individual.vector # The outcome isn't the best as the fiRBM row contains all the IDs again, but it's an easy fix (we will delete the fiRBM row later)
+  
+  return(Obs.Frame)
+}
+
+## EDGELIST FUNCTION
+create.an.edgeList<-function(nn){
+  
+  Edgelist<-dplyr::count(nn, winner , loser)
+  
+  return(Edgelist)
+}
+
+rbind.all.columns <- function(x, y) {
+  
+  x.diff <- setdiff(colnames(x), colnames(y))
+  y.diff <- setdiff(colnames(y), colnames(x))
+  
+  x[, c(as.character(y.diff))] <- NA
+  
+  y[, c(as.character(x.diff))] <- NA
+  
+  return(rbind(x, y))
+}
+
+```
+
+### Import dataset. 
+```{r}
+## Import dominance data
+Dominance <- read.csv ("dominance.data.csv")
+
+##FYI: in the result column a win =1, a loss=2, a draw=3 and unknown result = 4
+## Get rid of unknown outcomes.
+Dominance.clear<-Dominance[-which(Dominance$result=="4"),]
+
+## Get rid of individuals who appear in testing dataset only as we wont have any ranks associated to them from the training dataset.
+Dominance.clear2<-Dominance.clear[-which (Dominance.clear$to=="macy"),]
+Dominance.clear3<-Dominance.clear2[-which (Dominance.clear2$from=="macy"),]
+Dominance.clear4<-Dominance.clear3[-which (Dominance.clear3$to=="rodr"),]
+Dominance.clear5<-Dominance.clear4[-which (Dominance.clear4$from=="rodr"),]
+Dominance.clear6<-Dominance.clear5[-which (Dominance.clear5$to=="balu"),]
+Dominance.clear7<-Dominance.clear6[-which (Dominance.clear6$from=="balu"),]
+Dominance.clear8<-Dominance.clear7[-which (Dominance.clear7$to=="nige"),]
+## Set up date format and make sure interactions are chronologically ordered
+Dominance.clear8$date <- lubridate::ymd(as.character(Dominance.clear8$date))
+Dominance.df <- Dominance.clear8[order(Dominance.clear8$date),] 
+```
+
+###### PART 1 
+#### Split the dataset into training and testing
+```{r}
+## here we want to keep the chronological order hence using the function filter and not just the sample function
+# TRAINING dataset (80% OF THE DATA)
+training.data<- Dominance.df %>% filter(date<="2017-04-25")
+
+# TESTING dataset (20% OF THE DATA)
+testing.data<- Dominance.df %>% filter(date>"2017-04-25")
+```
+
+#### Create main dataframe that will store the ranks
+```{r}
+## create main df to store ranks
+main.df<- create.dataframe(training.data)
+main.df<-cbind(main.df,Method = "method")
+main.df$Method<-as.character(main.df$Method)
+```
+
+### First start by inferring and extracting the individual ranks, using the training dataset. We offer two examples: one using a dynamic approach (Elo-rating) and the second using a matrix-based approach (David's scores)
+
+## ORIGINAL ELO RATING MEHTOD
+```{r}
+## Run elo on the TRAINING data ONLY
+elo.scores <- elo.seq(winner=training.data$winner, loser=training.data$loser, Date=training.data$date,  runcheck=FALSE, draw =  training.data$draw)
+
+# Select the scores for the latest date in the training dataset
+latest.scores<-extract_elo(elo.scores, "2017-04-25") # NB: individuals who died during this period will have a "NA" score
+
+## Store elo rating per individual
+elo.df<-as.data.frame(t(sort(latest.scores)))
+# transform ratings into ordinal numbers
+elo.df[2,]<- c(62:1) 
+elo.df<-elo.df[-1,]
+```
+
+## DAVID'S SCORES using the compete package and the method "p"
+```{r}
+## Isolate winner-loser to get a matrix with extra column giving the results
+outcome.data<- training.data[,c("winner","loser","result")]
+outcome.data$result[outcome.data$result %in% "1"]<-"W"
+outcome.data$result[outcome.data$result %in% "2"]<-"L"
+outcome.data$result[outcome.data$result %in% "3"]<-"T"
+
+matrix.result<- get_wl_matrix(outcome.data, ties = "keep")
+
+## Method P
+David.score.p<-ds(matrix.result, norm = TRUE, type = "P")
+
+## Store david's scores
+dataframe<-as.data.frame (t(sort(David.score.p)))
+#transform scores into ordinal numbers
+dataframe[2,]<-c(62:1)
+dataframe<-dataframe[-1,]
+```
+
+#compile elo and david's scores dataframes
+
+```{r}
+main.df<-as.data.frame(t(rbind.fill(list(elo.df, dataframe))))
+colnames(main.df)<- c("elo","david")
+main.df$ID<- rownames(main.df)
+rownames(main.df)<-c()
+rank.df<- main.df[,c(3,1,2)]
+
+rank.df$elo<-as.integer(rank.df$elo)
+rank.df$david<-as.integer(rank.df$david)
+```
+
+## Create dataframe to store data when looking at whether ranks match aggressive outcomes in the testing dataset
+
+```{r}
+Decay.dataframe<- as.data.frame(matrix(0, ncol = 2, nrow = nrow(testing.data)))
+colnames(Decay.dataframe)<- c("Original.elo", "compete.p")
+
+## df to store day.nb
+Day.df<- as.data.frame(matrix(0, ncol = 2, nrow = nrow(testing.data)))
+colnames(Day.df)<- c("Original.elo", "compete.p")
+```
+
+## use the rankReliability package to look at the percentage of reliability 
+
+```{r}
+relia.res<- reliability_check(rank.df, testing.data[,c(1,8,9,5,10)])
+
+reliability<- relia.res [[1]]
+match.reliability<- relia.res[[2]]
+
+# Plot the results
+plots.res<-reliability_plot(reliability,match.reliability)
+```
+
+###### PART 2: modify the training dataset length and calculate ranks for each length of it
+
+#####Isolate individual ID that we will bind to the matching ranks
+```{r}
+List<- training.data[,3:4]
+Individuals<-c(as.character(List$from),as.character(List$to))
+
+Individual.vector<-unique(Individuals)
+df.ind<- data.frame(Individual.vector)
+colnames(df.ind)<- c("ID")
+```
+
+### Run a loop to extract ranks for each different training dataset length. Loop done for each tested method.
+
+## ELO-RATING ORIGINAL
+```{r}
+## For my own simplicity, in what follows i use the number of days (instead of the date column).
+
+df.elo<- create.dataframe(training.data)
+Day<-vector()
+
+for (m in seq(6,786, by=60)) {
+  
+  windowStart<-m
+  sub.df<-  training.data %>% filter(day_nb>=m)
+  
+  ## Run elo: avec draw AND presence included. 
+  res<- elo.seq(winner=as.character(sub.df$winner), loser=as.character(sub.df$loser), Date=sub.df$date,runcheck=FALSE, draw =  sub.df$draw)
+  
+  ## Select the scores for the latest date
+  latest.scores<-extract_elo(res)
+  
+  ## Store elo ratings
+  dataframe<-as.data.frame(t(sort(latest.scores)))
+  dataframe[2,]<- c(length(latest.scores):1)
+  dataframe<-dataframe[-1,]
+  df.elo<-rbind.fill(list(df.elo, dataframe))
+  Day[length(Day)+1]<-windowStart
+  
+}
+
+#store ranks
+df.elo<- df.elo[-1,]
+Elo.ranks<- cbind(df.elo, Day)
+Elo.ranks<- as.data.frame(t(Elo.ranks))
+colnames(Elo.ranks)<-as.character(unlist(Elo.ranks[63,]))
+Elo.ranks<-Elo.ranks[-63,]
+Elo.ranks[,15]<- c("Elo.original")
+names(Elo.ranks)[length(names(Elo.ranks))]<-"Method" 
+Elo.ranks<-cbind(Elo.ranks,df.ind)
+```
+
+## DAVID'S SCORE
+## Compete package
+```{r}
+Day<-vector()
+main.df.p<- create.dataframe(training.data)
+
+# Run loop
+for (m in seq(6,786, by=60)) {
+  
+  windowStart<-m
+  sub.df<-  training.data %>% filter(day_nb>=m)
+  
+  ## Isolate winner-loser to get a matrix with extra column giving the results
+  outcome.data<- sub.df[,c("winner","loser","result")]
+  outcome.data$result[outcome.data$result %in% "1"]<-"W"
+  outcome.data$result[outcome.data$result %in% "2"]<-"L"
+  outcome.data$result[outcome.data$result %in% "3"]<-"T"
+  
+  matrix<- get_wl_matrix(outcome.data, ties = "keep")
+  
+  ## Get rank (DS), Type P
+  David.score.p<-ds(matrix, norm = TRUE, type = "P")
+  dataframe<-as.data.frame(t(sort(David.score.p)))
+  dataframe[2,]<- c(length(David.score.p):1)
+  dataframe<-dataframe[-1,]
+  main.df.p<-rbind.fill(list(main.df.p, dataframe))
+  
+  Day[length(Day)+1]<-windowStart
+  
+}
+
+#Store ranks
+main.df.p<- main.df.p[-1,]
+DS.ranks.P<- cbind(main.df.p, Day)
+DS.ranks.P<- as.data.frame(t(DS.ranks.P))
+colnames(DS.ranks.P)<-as.character(unlist(DS.ranks.P[63,]))
+DS.ranks.P<-DS.ranks.P[-63,]
+DS.ranks.P[,15]<- c("DS.compete.P")
+names(DS.ranks.P)[length(names(DS.ranks.P))]<-"Method" 
+
+Ranks.compete.P<-cbind(DS.ranks.P,df.ind)
+```
+
+## compile both dataframes
+```{r}
+rank.training<- rbind(Ranks.compete.P,Elo.ranks)
+rownames(rank.training)<-c()
+rank.training<-rank.training[,c(16,15,1:14)]
+```
+
+
+##test methods's reliability: do ranks match aggressive outcomes in the testing dataset?
+```{r}
+## looking at David's scores reliability through time.
+rank.df<-rank.training%>%filter(Method=="DS.compete.P") # select for this method
+rank.df<-rank.df[,-2]
+
+david.relia.res<-reliability_check(rank.df,testing.data[,c(1,8,9,5,10)])
+relia.df<-david.relia.res[[1]]
+
+relia.df<-relia.df %>% mutate(Month=as.numeric(sub('Match_', '', as.character(relia.df$Method))))
+relia.df$Method<- "David's.scores"
+
+ggplot(relia.df, aes(x=Month, y=Reliability))+ geom_line()
+
+## looking at the Elo rating reliability through time.
+rank.df.elo<-rank.training%>%filter(Method=="Elo.original") # select for this method
+rank.df.elo<-rank.df.elo[,-2]
+
+elo.relia.res<-reliability_check(rank.df.elo,testing.data[,c(1,8,9,5,10)])
+relia.df.elo<-elo.relia.res[[1]]
+
+relia.df.elo<-relia.df.elo %>% mutate(Month=as.numeric(sub('Match_', '', as.character(relia.df.elo$Method))))
+relia.df.elo$Method<- "Elo.original"
+
+## Combine the 2 dataframes
+df.methods <- rbind(relia.df,relia.df.elo)
+
+
+#Plot
+ggplot(df.methods, aes(x=Month, y=Reliability,color = Method))+ geom_line()
+```
+
+###### PART 3: keep the training dataset constant and modify the testing dataset length
+
+####  New split of training and testing datasets. Here we split sooner so we have a much bigger testing dataset to play around. 
+```{r}
+## Split data
+# TRAINING dataset
+newtraining.data<- Dominance.df %>% filter(date<="2015-07-04")
+
+# TESTING dataset
+newtesting.data<- Dominance.df %>% filter(date>"2015-07-04")
+```
+
+## Obtain dataframe of individual IDs
+```{r}
+List<- newtraining.data[,3:4]
+Individuals<-c(as.character(List$from),as.character(List$to))
+
+Individual.vector<-unique(Individuals)
+df.ind<- data.frame(Individual.vector)
+colnames(df.ind)<- c("ID")
+```
+
+
+### Extract ranks with each method using the new training dataset
+## ORIGINAL ELO-RATING
+```{r}
+df.elo<- create.dataframe(newtraining.data)
+
+result.elo <- elo.seq(winner=as.character(newtraining.data$winner), loser=as.character(newtraining.data$loser), Date=newtraining.data$date,runcheck=FALSE, draw =  newtraining.data$draw)
+
+## Select the scores for the latest date
+latest.scores<-extract_elo(result.elo)
+
+## Store mother's elo ratings
+## Store elo rating per individual
+elo.df<-as.data.frame(t(sort(latest.scores)))
+elo.df[2,]<- c(43:1)
+elo.df<-elo.df[-1,]
+rownames(elo.df)<-c()
+```
+
+## DAVID'S SCORES
+#Compete package
+```{r}
+## Create storing df
+main.df.p<- create.dataframe(newtraining.data)
+
+## Isolate winner-loser to get a matrix with extra column giving the results
+outcome.data<- newtraining.data[,c("winner","loser","result")]
+outcome.data$result[outcome.data$result %in% "1"]<-"W"
+outcome.data$result[outcome.data$result %in% "2"]<-"L"
+outcome.data$result[outcome.data$result %in% "3"]<-"T"
+
+matrix<- get_wl_matrix(outcome.data, ties = "keep")
+
+## Get rank (DS), Type P
+David.score.p<-ds(matrix, norm = TRUE, type = "P")
+## Store david's scores
+dataframe<-as.data.frame (t(sort(David.score.p)))
+dataframe[2,]<-c(43:1)
+dataframe<-dataframe[-1,]
+dataframe[2,]<-names(dataframe)
+rownames(dataframe)<-c()
+```
+
+#compile elo and david's scores dataframes
+```{r}
+rank.df<-as.data.frame(t(rbind.fill(list(elo.df, dataframe))))
+colnames(rank.df)<- c("elo","david","ID")
+rank.df$elo<-as.integer(as.character(rank.df$elo))
+rank.df$david<-as.integer(as.character(rank.df$david))
+
+rank.df<-rank.df[,c(3,1,2)]
+rownames(rank.df)<- c()
+```
+
+##  test if the rank orders match with dyadic outcomes from testing dataset
+```{r}
+## here have to make the size of the testing datset vary
+start <- 186
+end<-1086
+windowsize<- 60
+
+final.df <- data.frame(Method=as.character("elo"), Reliability=1,low.ci.boot=1,high.ci.boot=1,Month=1)
+
+while (start + windowsize<=end) {
+  
+  m<-start + windowsize
+  sub.prediction<-  newtesting.data %>% filter(day_nb<=m)
+  # Calculate efficiency
+  prediction.df<- reliability_check(rank.df, sub.prediction[,c(1,8,9,5,10)])
+  
+  reliability.df<- prediction.df[[1]]
+  reliability.df$Month <- m #store month
+  
+  final.df<-rbind(final.df,reliability.df)
+  windowsize<- windowsize+60
+  
+} 
+
+final.df<- final.df[-1,]
+
+#Plot
+ggplot(final.df, aes(x=Month, y=Reliability,color = Method))+ geom_line()
+```
+
+## Group and dyad level changes in outcome predictability
+```{r}
+## Split data: keep only 80% of it. Will predict with 20% of it.
+Dominance.clear$date<- lubridate::ymd(as.character(Dominance.clear$date))
+Dominance.clear <- Dominance.clear[order(Dominance.clear$date),] 
+
+train.df<-  Dominance.clear %>% filter(date<="2015-05-06")
+
+###20% left used to predict
+long.testing.df<-Dominance.clear %>% filter(date>"2015-05-06")
+```
+
+## get rank order: I&SI method
+```{r}
+outcome.data<- train.df[,c("winner","loser","result")]
+outcome.data$result[outcome.data$result %in% "1"]<-"W"
+outcome.data$result[outcome.data$result %in% "2"]<-"L"
+outcome.data$result[outcome.data$result %in% "3"]<-"T"
+
+matrix.result<- get_wl_matrix(outcome.data, ties = "keep")
+isi.order13<-isi13(matrix.result, nTries = 450,random = FALSE)
+df.finale <- data.frame(isi.order13$best_order)
+df.finale$rank <- seq.int(nrow(df.finale))
+colnames(df.finale)<- c("ID", "rank")
+```
+
+## get reliability checked
+```{r}
+## Calculate rank order reliability
+Decay.ds<-reliability_check(df.finale,long.testing.df[,c(1,8,9,5,10)])
+
+## store each df
+df.reliability<-Decay.ds[[1]]
+decay<-Decay.ds[[2]]
+
+
+write.csv(decay, "decay.pre.dyad.csv")
+## add dyad: for ease, i did it manually ... and loaded back the file that had each outcome associated with the dyad type
+decay.isi<- read.csv("decay.dyad.csv")
+decay.isi$date<- ymd(decay.isi$date)
+
+# isolate dyadd: females
+female.df<-decay.isi%>%filter(dyad=="Af_Af")
+female.df<- female.df [,-c(1,8)]
+
+# isolate dyadd: males
+male.df<-decay.isi%>%filter(dyad=="Am_Am")
+male.df<- male.df[,-c(1,8)]
+
+
+decay.isi<-decay.isi[,-c(1,8)]
+```
+
+## Plots
+```{r}
+# Global trend
+global<-reliability_plot(df.reliability,decay.isi,method="loess")
+plot.global<- global[[2]]
+plot.global+geom_smooth(method="loess",color="blue") 
+
+# adult female dyads
+female.dyad<-reliability_plot(df.reliability,female.df,method="loess")
+plot.female<- female.dyad[[2]]
+plot.female+geom_smooth(method="loess",color="blue")
+
+
+# adult male dyads 
+male.dyad<-reliability_plot(df.reliability,male.df,method="loess") 
+plot.male<- male.dyad[[2]]
+plot.male+geom_smooth(method="loess",color="blue")
+```
+
