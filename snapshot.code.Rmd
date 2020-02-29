@@ -3,7 +3,7 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-#### This code is a snapshot of the complete code presented in the file "ranking.methods". It seeks to show more easily the split between training and testing datasets and how it is applied to the 2 types of approach: dynamic and static. 
+#### This code is a snapshot of the complete code. It seeks to show more easily the split between training and testing datasets, how it is applied to the 2 types of approach (dynamic and static) while using the rankReliability package. TYhis code presents the four analysis done in the paper associated to it. To run this code you will need the "dominance.data" and "decay.dyad" files.
 
 ###libraries
 ```{r}
